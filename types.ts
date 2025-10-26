@@ -23,3 +23,11 @@ export interface AdjustmentParams {
   difficulty?: 'simpler' | 'more_expert';
   instruction?: string;
 }
+
+export type DiagramType = 'flowchart' | 'sequence';
+
+export interface GenerateStructureParams {
+  postContent: string;
+  detailLevel: number;
+  diagramType: DiagramType;
+}

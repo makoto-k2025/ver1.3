@@ -1,5 +1,5 @@
 {
-  "name": "Copy of Social Post Generator v20251025",
+  "name": "note Creation Support AI",
   "description": "An application to generate engaging social media posts on any business topic. Users can specify post length, complexity, and enable a 'thinking mode' for deeper analysis, then copy the results as CSV.",
   "requestFramePermissions": []
 }

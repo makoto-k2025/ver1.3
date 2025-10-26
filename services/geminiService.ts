@@ -1,6 +1,5 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
-import type { GeneratePostsParams, GeneratedPost, ImageTone, AdjustmentParams } from '../types';
+import type { GeneratePostsParams, GeneratedPost, ImageTone, AdjustmentParams, GenerateStructureParams } from '../types';
 
 const getDifficultyDescription = (level: number): string => {
   switch (level) {
@@ -42,6 +41,10 @@ export const generatePosts = async (params: GeneratePostsParams): Promise<Genera
     ? `さらに、以下の方向性や指示を考慮して投稿を作成してください：\n「${direction}」\n`
     : '';
 
+  const formattingInstruction = maxLength > 600
+    ? '6.  投稿が長い場合（noteモードなど）、読みやすさを向上させるために、必要に応じて適切なマークダウン（## H2、### H3、> 引用、\`\`\`コードブロック\`\`\`）を使用してください。'
+    : '6.  絵文字やマークダウンは一切使用しないでください。プレーンテキストで出力してください。';
+
   const systemInstruction = `
 ${writingStyleSummary}
 
@@ -57,6 +60,7 @@ ${directionInstruction}
 3.  関連性が高く人気のある日本のハッシュタグを3〜5個、投稿の文中または末尾に含めてください。
 4.  モバイルデバイスで読みやすいように、改行を入れて投稿を適切に構成してください。
 5.  絵文字は一切使用しないでください。
+${formattingInstruction}
 
 ユーザーのテーマに基づいて、厳密に5つの異なる投稿バリエーションを生成してください。
   `;
@@ -70,7 +74,7 @@ ${directionInstruction}
         properties: {
           post: {
             type: Type.STRING,
-            description: `A X post body between ${minLength} and ${maxLength} characters, written in the persona of 'Kashiwagi'. It must include hashtags but NO emojis.`,
+            description: `A X post body between ${minLength} and ${maxLength} characters, written in the persona of 'Kashiwagi'. It must include hashtags but NO emojis. It may use markdown for formatting.`,
           },
           intent: {
             type: Type.STRING,
@@ -138,6 +142,7 @@ ${adjustmentInstruction}
 
 修正後の投稿と、新しい意図を生成してください。
 絵文字は一切使用しないでください。
+修正後の投稿でも、必要に応じてマークダウンを使用して構造化してください。
 `;
 
   const modelConfig = {
@@ -147,7 +152,7 @@ ${adjustmentInstruction}
       properties: {
         post: {
           type: Type.STRING,
-          description: `The revised X post body, written in the persona of 'Kashiwagi'. It must include hashtags but NO emojis.`,
+          description: `The revised X post body, written in the persona of 'Kashiwagi'. It must include hashtags but NO emojis. It may use markdown for formatting.`,
         },
         intent: {
           type: Type.STRING,
@@ -182,6 +187,71 @@ ${adjustmentInstruction}
     throw new Error("投稿の調整に失敗しました。詳細はコンソールを確認してください。");
   }
 };
+
+export const generateStructure = async (params: GenerateStructureParams): Promise<string> => {
+  if (!process.env.API_KEY) {
+    throw new Error("API_KEYが設定されていません。");
+  }
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const { postContent, detailLevel, diagramType } = params;
+  
+  const detailDescriptions: { [key: number]: string } = {
+    1: '非常にシンプルな概要レベル。主要な2〜3ステップのみ。',
+    2: '基本的なレベル。主要なステップと関係性を示す。',
+    3: '標準的な詳細レベル。主要なプロセスと重要な分岐を含む。',
+    4. '詳細なレベル。サブプロセスや意思決定のポイントも明確にする。',
+    5: '非常に詳細なレベル。例外処理や細かい依存関係も含む、包括的な図。',
+  };
+
+  const systemInstruction = `
+あなたは、与えられたビジネス関連のテキストコンテンツを分析し、その中核となるロジック、プロセス、または構造を視覚的な図に変換する専門のビジネスアナリストです。
+あなたのタスクは、Mermaid.js構文を使用して、指定された種類の図を生成することです。
+
+ユーザーからの指示：
+- 図の種類： ${diagramType === 'flowchart' ? 'フローチャート (graph TD)' : 'シーケンス図 (sequenceDiagram)'}
+- 詳細レベル： レベル${detailLevel} - ${detailDescriptions[detailLevel]}
+
+以下のルールを厳格に守ってください：
+1.  提供されたテキストコンテンツを分析し、指示された図の種類と詳細レベルに最適な構造を抽出します。
+2.  Mermaid.jsの構文のみを使用して図を記述します。
+3.  あなたの応答には、Mermaidコードブロックのみを含めてください。コードブロックの前後に説明や前置き、その他のテキストを一切含めないでください。
+4.  応答形式は、\`\`\`mermaid ... \`\`\` の形式でなければなりません。
+
+分析対象のテキスト：
+「${postContent}」
+`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-pro",
+      contents: "テキストを分析し、Mermaid図を生成してください。",
+      config: {
+        systemInstruction,
+        temperature: 0.2,
+      }
+    });
+
+    const responseText = response.text.trim();
+    
+    // Extract content from mermaid code block
+    const mermaidCodeMatch = responseText.match(/```mermaid\n([\s\S]*?)\n```/);
+    if (mermaidCodeMatch && mermaidCodeMatch[1]) {
+      return mermaidCodeMatch[1].trim();
+    }
+    
+    // Fallback if no code block is found but the content looks like mermaid code
+    if (responseText.startsWith('graph') || responseText.startsWith('sequenceDiagram')) {
+      return responseText;
+    }
+
+    throw new Error("Mermaidコードの生成に失敗しました。");
+
+  } catch (error) {
+    console.error("Gemini API call failed during structure generation:", error);
+    throw new Error("構造の生成に失敗しました。詳細はコンソールを確認してください。");
+  }
+};
+
 
 export const generateImage = async (postContent: string, tone: ImageTone): Promise<string> => {
   if (!process.env.API_KEY) {
